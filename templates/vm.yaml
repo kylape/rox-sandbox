@@ -1,0 +1,61 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: ${VM_NAME}
+  namespace: ${VM_NAMESPACE}
+  labels:
+    app: rox-sandbox
+    sandbox: ${VM_NAME}
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: ${VM_NAME}
+        app: rox-sandbox
+    spec:
+      architecture: amd64
+      domain:
+        cpu:
+          cores: 8
+        resources:
+          requests:
+            memory: 16Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      tolerations:
+        - key: workload-type
+          operator: Equal
+          value: kubevirt-vm
+          effect: NoSchedule
+      volumes:
+        - name: rootdisk
+          containerDisk:
+            image: ${CONTAINER_DISK_IMAGE}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              hostname: ${VM_NAME}
+              manage_etc_hosts: true
+              users:
+                - name: stackrox
+                  sudo: ALL=(ALL) NOPASSWD:ALL
+                  shell: /bin/bash
+                  ssh_authorized_keys:
+                    - ${SSH_PUBLIC_KEY}
+              runcmd:
+                - curl -sLo /usr/local/bin/kind-setup.sh "${KIND_SETUP_URL}" && chmod +x /usr/local/bin/kind-setup.sh
+                - K8S_VERSION=${K8S_VERSION} /usr/local/bin/kind-setup.sh > /var/log/kind-setup.log 2>&1

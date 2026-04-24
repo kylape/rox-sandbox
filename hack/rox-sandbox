@@ -15,8 +15,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CACHE_DIR="${HOME}/.cache/rox-sandbox"
 VM_NAMESPACE="${VM_NAMESPACE:-rox-sandbox}"
+K8S_VERSION="${K8S_VERSION:-v1.29.2}"
+KIND_SETUP_URL="${KIND_SETUP_URL:-https://raw.githubusercontent.com/kylape/rox-sandbox/main/kind-setup.sh}"
 
 # Registry for containerDisk image
 CONTAINER_DISK_IMAGE="${CONTAINER_DISK_IMAGE:-registry-dev-registry.apps.rosa.kl-01-29-additi.uxca.p3.openshiftapps.com/rox-sandbox/kind-vm:latest}"
@@ -47,69 +50,16 @@ cmd_create() {
 
     # Create the VM
     log "Creating KubeVirt VM..."
-    kubectl apply -f - <<EOF
-apiVersion: kubevirt.io/v1
-kind: VirtualMachine
-metadata:
-  name: ${name}
-  namespace: ${VM_NAMESPACE}
-  labels:
-    app: rox-sandbox
-    sandbox: ${name}
-spec:
-  runStrategy: Always
-  template:
-    metadata:
-      labels:
-        kubevirt.io/domain: ${name}
-        app: rox-sandbox
-    spec:
-      architecture: amd64
-      domain:
-        cpu:
-          cores: 8
-        resources:
-          requests:
-            memory: 16Gi
-        devices:
-          disks:
-            - name: rootdisk
-              disk:
-                bus: virtio
-            - name: cloudinitdisk
-              disk:
-                bus: virtio
-          interfaces:
-            - name: default
-              masquerade: {}
-      networks:
-        - name: default
-          pod: {}
-      tolerations:
-        - key: workload-type
-          operator: Equal
-          value: kubevirt-vm
-          effect: NoSchedule
-      volumes:
-        - name: rootdisk
-          containerDisk:
-            image: ${CONTAINER_DISK_IMAGE}
-        - name: cloudinitdisk
-          cloudInitNoCloud:
-            userData: |
-              #cloud-config
-              hostname: ${name}
-              manage_etc_hosts: true
-              users:
-                - name: stackrox
-                  sudo: ALL=(ALL) NOPASSWD:ALL
-                  shell: /bin/bash
-                  ssh_authorized_keys:
-                    - $(cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub 2>/dev/null || echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC placeholder")
-              runcmd:
-                - curl -sLo /usr/local/bin/kind-setup.sh "${KIND_SETUP_URL:-https://raw.githubusercontent.com/kylape/rox-sandbox/main/kind-setup.sh}" && chmod +x /usr/local/bin/kind-setup.sh
-                - K8S_VERSION=v1.29.2 /usr/local/bin/kind-setup.sh > /var/log/kind-setup.log 2>&1
-EOF
+    local ssh_key
+    ssh_key=$(cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub 2>/dev/null || echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC placeholder")
+
+    VM_NAME="${name}" \
+    VM_NAMESPACE="${VM_NAMESPACE}" \
+    CONTAINER_DISK_IMAGE="${CONTAINER_DISK_IMAGE}" \
+    SSH_PUBLIC_KEY="${ssh_key}" \
+    KIND_SETUP_URL="${KIND_SETUP_URL}" \
+    K8S_VERSION="${K8S_VERSION}" \
+    envsubst < "${REPO_DIR}/templates/vm.yaml" | kubectl apply -f -
 
     # Wait for VMI to be running
     log "Waiting for VM to start..."
